@@ -112,7 +112,7 @@
 <body>
 
 <div class="container">
-    <h1>🎙️ 실시간 웹 데시벨 측정기</h1>
+    <h1>실시간 데시벨 측정기</h1>
 
     <div class="dashboard">
         <div class="card">
@@ -145,22 +145,24 @@
 </div>
 
 <script>
-    let audioContext;
-    let analyser;
-    let dataArray;
-    let source;
-    let isMeasuring = false;
+    // ============ 전역 변수 선언 ============
+    let audioContext;                          // 웹 오디오 API 컨텍스트
+    let analyser;                              // 오디오 분석 노드
+    let dataArray;                             // 오디오 데이터 배열
+    let source;                                // 미디어 스트림 소스
+    let isMeasuring = false;                   // 측정 중 여부 플래그
     
     // 데이터 기록용 배열
-    let dbHistory = [];
-    let timeHistory = [];
+    let dbHistory = [];                        // 데시벨 값 저장 배열
+    let timeHistory = [];                      // 시간값 저장 배열
+    let lastSaveTime = 0;                      // 마지막 데이터 저장 시간 (0.5초 간격 제어용)
     
-    let startTimeTicks;
-    let startTimeString;
-    let timerInterval;
-    let chart;
+    let startTimeTicks;                        // 측정 시작 시간 (performance.now())
+    let startTimeString;                       // 측정 시작 시간 (문자열)
+    let timerInterval;                         // 진행 시간 표시 타이머 ID
+    let chart;                                 // Chart.js 인스턴스
 
-    // DOM 요소 링크
+    // ============ DOM 요소 선택 ============
     const startBtn = document.getElementById('start-btn');
     const stopBtn = document.getElementById('stop-btn');
     const csvBtn = document.getElementById('csv-btn');
@@ -169,143 +171,203 @@
     const startTimeEl = document.getElementById('start-time');
     const durationEl = document.getElementById('duration');
 
-    // Chart.js 초기화 함수
+    /**
+     * Chart.js 그래프 초기화 함수
+     * - 기존 차트가 있으면 제거
+     * - 새로운 차트 객체 생성 및 설정
+     */
     function initChart() {
+        // 캔버스 2D 컨텍스트 획득
         const ctx = document.getElementById('dbChart').getContext('2d');
-        if (chart) chart.destroy(); // 기존 차트가 있다면 초기화
         
+        // 기존 차트가 있다면 메모리 해제 (중복 생성 방지)
+        if (chart) chart.destroy();
+        
+        // 새로운 Chart 인스턴스 생성
         chart = new Chart(ctx, {
-            type: 'line',
+            type: 'line',                      // 라인 차트 타입
             data: {
-                labels: [],
+                labels: [],                    // X축 라벨 (경과 시간)
                 datasets: [{
                     label: '소음 크기 (dB)',
-                    data: [],
-                    borderColor: '#4f46e5',
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    borderWidth: 2,
-                    pointRadius: 0, // 그래프 부드럽게 표현하기 위해 점 생략
-                    fill: true,
-                    tension: 0.2
+                    data: [],                  // Y축 데이터 (데시벨)
+                    borderColor: '#4f46e5',    // 선 색상
+                    backgroundColor: 'rgba(79, 70, 229, 0.1)',  // 배경 색상
+                    borderWidth: 2,            // 선 너비
+                    pointRadius: 0,            // 데이터 포인트 생략 (부드러운 표현)
+                    fill: true,                // 영역 채우기
+                    tension: 0.2               // 곡선 부드러움 정도
                 }]
             },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true,              // 반응형 크기 조정
+                maintainAspectRatio: false,    // 컨테이너 높이에 맞추기
                 scales: {
-                    x: { title: { display: true, text: '경과 시간 (초)' } },
-                    y: { min: 0, max: 120, title: { display: true, text: '데시벨 (dB)' } }
+                    // X축 설정
+                    x: { 
+                        title: { display: true, text: '경과 시간 (초)' } 
+                    },
+                    // Y축 설정 (0~120 dB)
+                    y: { 
+                        min: 0, 
+                        max: 120, 
+                        title: { display: true, text: '데시벨 (dB)' } 
+                    }
                 }
             }
         });
     }
 
-    // 측정 시작 로직
+    /**
+     * 측정 시작 버튼 클릭 이벤트 핸들러
+     * - 마이크 권한 요청
+     * - 웹 오디오 API 초기화
+     * - 측정 루프 시작
+     */
     startBtn.addEventListener('click', async () => {
         try {
             // 마이크 권한 요청 및 오디오 스트림 획득
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
             
+            // 측정 상태 설정 및 데이터 초기화
             isMeasuring = true;
             dbHistory = [];
             timeHistory = [];
+            lastSaveTime = 0;                  // 0.5초 간격 제어용 초기화
             initChart();
 
             // 시간 기록 시작
             const now = new Date();
-            startTimeTicks = performance.now();
-            startTimeString = now.toLocaleTimeString();
+            startTimeTicks = performance.now();  // 고정밀도 시간 측정 시작
+            startTimeString = now.toLocaleTimeString();  // 시작 시간 표시용
             startTimeEl.textContent = startTimeString;
 
-            // 웹 오디오 API 세팅
+            // 웹 오디오 API 초기화 및 설정
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
-            analyser.fftSize = 512;
-            source = audioContext.createMediaStreamSource(stream);
-            source.connect(analyser);
+            analyser.fftSize = 512;                        // 주파수 분석 해상도 설정 (512 구간)
+            source = audioContext.createMediaStreamSource(stream);  // 스트림 소스 생성
+            source.connect(analyser);                      // 분석기에 연결
 
+            // 분석에 필요한 데이터 배열 생성
             const bufferLength = analyser.frequencyBinCount;
             dataArray = new Float32Array(bufferLength);
 
-            // UI 변경
+            // UI 버튼 상태 변경 (시작 버튼 숨김, 종료 버튼 표시)
             startBtn.style.display = 'none';
             stopBtn.style.display = 'inline-block';
             csvBtn.style.display = 'none';
 
-            // 실시간 분석 루프 가동
+            // 실시간 분석 루프 시작
             analyzeAudio();
             
-            // 상단 진행시간 타이머 가동 (0.1초마다 갱신)
+            // 상단 진행시간 표시 업데이트 (0.1초마다 갱신)
             timerInterval = setInterval(() => {
                 const elapsed = ((performance.now() - startTimeTicks) / 1000).toFixed(1);
                 durationEl.textContent = `${elapsed}초`;
             }, 100);
 
         } catch (err) {
+            // 마이크 접근 오류 처리
             alert('마이크 접근 권한이 거부되었거나 마이크를 찾을 수 없습니다.');
             console.error(err);
         }
     });
 
-    // 오디오 분석 및 데시벨 계산 함수
+    /**
+     * 오디오 분석 및 데시벨 계산 함수
+     * - 매 프레임마다 호출되어 실시간 음성 분석
+     * - 0.5초 간격으로만 데이터 저장
+     * - 그래프 및 UI 실시간 업데이트
+     */
     function analyzeAudio() {
+        // 측정이 중단된 경우 루프 종료
         if (!isMeasuring) return;
 
+        // 다음 프레임에서도 이 함수 호출 등록 (재귀적 호출)
         requestAnimationFrame(analyzeAudio);
 
-        // 시간 도메인 데이터(진폭) 가져오기
+        // 시간 도메인 데이터(진폭) 가져오기 - 마이크로부터의 원본 음성 신호
         analyser.getFloatTimeDomainData(dataArray);
 
-        // 실시간 음압(RMS) 계산
+        // 음압(RMS: Root Mean Square) 계산
+        // RMS는 음성 신호의 크기를 나타냄
         let sumSquares = 0.0;
         for (const amplitude of dataArray) {
-            sumSquares += amplitude * amplitude;
+            sumSquares += amplitude * amplitude;  // 각 진폭값을 제곱하여 누적
         }
-        let rms = Math.sqrt(sumSquares / dataArray.length);
+        let rms = Math.sqrt(sumSquares / dataArray.length);  // 평균의 제곱근
 
-        // RMS 기반 데시벨(dB) 계산 (기본 보정값 +100 가산)
+        // RMS를 데시벨(dB)로 변환
+        // 공식: dB = 20 * log10(RMS) + 기준값
+        // 기준값은 마이크 감도에 따라 조정 가능
         let db = 0;
         if (rms > 0) {
-            db = 20 * Math.log10(rms) + 100;
+            db = 20 * Math.log10(rms) + 100;  // +100은 음수 값 방지용 보정값
         }
-        // 음소거 상태일 때 마이너스 무한대로 가는 것 방지
-        db = Math.max(0, Math.min(db, 130)); 
+        
+        // 데시벨 범위 제한 (0~130 dB)
+        // 음소거 상태일 때 음수 무한대로 가는 것 방지
+        db = Math.max(0, Math.min(db, 130));
 
+        // 측정 시작 이후의 경과 시간(초 단위, 소수점 2자리)
         const elapsedSeconds = ((performance.now() - startTimeTicks) / 1000).toFixed(2);
 
-        // 기록 저장
-        dbHistory.push(parseFloat(db.toFixed(1)));
-        timeHistory.push(parseFloat(elapsedSeconds));
+        // ============ 0.5초 간격 데이터 저장 로직 ============
+        // 현재 시간과 마지막 저장 시간의 차이가 0.5초 이상이면 저장
+        if (elapsedSeconds - lastSaveTime >= 0.5) {
+            // 데시벨 값과 시간을 배열에 저장
+            dbHistory.push(parseFloat(db.toFixed(1)));
+            timeHistory.push(parseFloat(elapsedSeconds));
+            
+            // 마지막 저장 시간 업데이트
+            lastSaveTime = parseFloat(elapsedSeconds);
+        }
 
-        // UI 갱신
+        // UI 갱신: 현재 데시벨 표시 (매 프레임마다 실시간 업데이트)
         currentDbEl.textContent = `${db.toFixed(1)} dB`;
 
-        // 그래프 데이터 실시간 추가 (성능 관리를 위해 최근 100개까지만 노출)
+        // 그래프 데이터 실시간 추가
+        // 매 프레임마다 그래프에 표시하되, 성능 관리를 위해 최근 100개까지만 화면에 노출
         chart.data.labels.push(elapsedSeconds);
         chart.data.datasets[0].data.push(db.toFixed(1));
+        
+        // 데이터가 100개를 초과하면 가장 오래된 데이터 제거 (메모리/성능 관리)
         if (chart.data.labels.length > 100) {
-            chart.data.labels.shift();
-            chart.data.datasets[0].data.shift();
+            chart.data.labels.shift();  // 가장 오래된 라벨 제거
+            chart.data.datasets[0].data.shift();  // 가장 오래된 데이터 제거
         }
-        chart.update('none'); // 애니메이션 없이 빠르게 업데이트
+        
+        // 그래프 업데이트 ('none'은 애니메이션 없이 빠르게 업데이트)
+        chart.update('none');
     }
 
-    // 측정 종료 로직
+    /**
+     * 측정 종료 버튼 클릭 이벤트 핸들러
+     * - 측정 중단
+     * - 오디오 스트림 해제
+     * - 평균 데시벨 계산 및 표시
+     * - UI 상태 변경
+     */
     stopBtn.addEventListener('click', () => {
+        // 측정 상태 변경 및 타이머 해제
         isMeasuring = false;
-        clearInterval(timerInterval);
+        clearInterval(timerInterval);  // 진행 시간 업데이트 타이머 정지
 
         // 오디오 스트림 및 컨텍스트 정지
-        if (source) source.mediaStream.getTracks().forEach(track => track.stop());
-        if (audioContext) audioContext.close();
+        if (source) source.mediaStream.getTracks().forEach(track => track.stop());  // 마이크 스트림 종료
+        if (audioContext) audioContext.close();  // 웹 오디오 컨텍스트 종료
 
-        // 전체 평균 데시벨 계산
+        // 전체 평균 데시벨 계산 및 표시
         if (dbHistory.length > 0) {
+            // 저장된 모든 데시벨 값의 합계 계산
             const sum = dbHistory.reduce((a, b) => a + b, 0);
+            // 평균값 계산
             const avg = (sum / dbHistory.length).toFixed(1);
+            // UI에 평균값 표시
             avgDbEl.textContent = `${avg} dB`;
             
-            // 그래프에 평균값 점선 표시 추가
+            // 그래프에 평균값 점선 표시 추가 (선택 사항)
             chart.options.plugins.annotation = {
                 annotations: {
                     line1: {
@@ -314,42 +376,62 @@
                         yMax: avg,
                         borderColor: 'rgb(255, 99, 132)',
                         borderWidth: 2,
-                        borderDash: [6, 6]
+                        borderDash: [6, 6]  // 점선 패턴
                     }
                 }
             };
         }
 
         // 그래프를 전체 데이터 기반으로 다시 그려서 전체 요약본 출력
+        // (기존 그래프는 최근 100개만 표시했으므로, 여기서 전체 데이터로 재갱신)
         chart.data.labels = timeHistory;
         chart.data.datasets[0].data = dbHistory;
         chart.update();
 
-        // UI 변경
-        startBtn.style.display = 'inline-block';
-        startBtn.textContent = '재측정 시작';
-        stopBtn.style.display = 'none';
-        csvBtn.style.display = 'inline-block';
+        // UI 버튼 상태 변경
+        startBtn.style.display = 'inline-block';  // 시작 버튼 다시 표시
+        startBtn.textContent = '재측정 시작';      // 버튼 텍스트 변경
+        stopBtn.style.display = 'none';           // 종료 버튼 숨김
+        csvBtn.style.display = 'inline-block';    // CSV 다운로드 버튼 표시
     });
 
-    // CSV 파일로 저장 및 다운로드 기능
+    /**
+     * CSV 파일로 저장 및 다운로드 기능
+     * - 측정된 데이터를 CSV 형식으로 변환
+     * - 브라우저 다운로드 기능을 통해 파일 저장
+     */
     csvBtn.addEventListener('click', () => {
+        // 저장된 데이터가 없으면 함수 종료
         if (dbHistory.length === 0) return;
 
         // CSV 문자열 생성
-        let csvContent = "\uFEFFTime(s),Decibel(dB)\n"; // 엑셀 한글 깨짐 방지 BOM 추가
+        // BOM(\uFEFF) 추가: 엑셀에서 한글 깨짐 방지
+        let csvContent = "\uFEFFTime(s),Decibel(dB)\n";
+        
+        // 모든 측정 데이터를 CSV 형식으로 변환
         for (let i = 0; i < dbHistory.length; i++) {
             csvContent += `${timeHistory[i]},${dbHistory[i]}\n`;
         }
 
-        // 가상 링크를 만들어 다운로드 트리거
+        // Blob 객체 생성: CSV 데이터를 바이너리로 변환
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        
+        // 임시 URL 생성 (Blob 다운로드용)
         const url = URL.createObjectURL(blob);
+        
+        // 가상 다운로드 링크 생성
         const link = document.createElement("a");
-        link.setAttribute("href", url);
+        link.setAttribute("href", url);  // Blob URL 설정
+        // 파일명: 시작 시간을 포함한 형식 (공백 제거)
         link.setAttribute("download", `decibel_report_${startTimeString.replace(/ /g, '')}.csv`);
+        
+        // 링크를 DOM에 임시 추가
         document.body.appendChild(link);
+        
+        // 클릭 이벤트 트리거 (다운로드 시작)
         link.click();
+        
+        // 사용 완료된 링크 DOM에서 제거 (메모리 관리)
         document.body.removeChild(link);
     });
 </script>
