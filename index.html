@@ -84,10 +84,21 @@
     const eyeRight = document.getElementById("eye-right");
     const mouth = document.getElementById("mouth");
 
-    let faceTracker, poseTracker, filterOn = true, lastVideoTime = -1;
-    let targetX = innerWidth / 2, targetY = innerHeight / 2;
-    let smoothX = targetX, smoothY = targetY, smoothRoll = 0, smoothScale = 1;
-    let blink = 0, mouthOpen = 0, hasFace = false;
+    let faceTracker, poseTracker;
+    let filterOn = true;
+    let lastVideoTime = -1;
+    let lastInferenceTime = 0;
+    let lastFrameTime = 0;
+    let lastFaceTime = 0;
+    let hasFace = false;
+
+    const motion = {
+      x: innerWidth / 2, y: innerHeight / 2,
+      roll: 0, scale: 1,
+      gazeLX: 0, gazeLY: 0, gazeRX: 0, gazeRY: 0,
+      blink: 0, mouth: 0
+    };
+    const target = { ...motion };
 
     toggle.addEventListener("click", () => {
       filterOn = !filterOn;
@@ -96,130 +107,226 @@
       potato.style.opacity = filterOn && hasFace ? "1" : "0";
     });
 
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const mix = (a, b, amount) => a + (b - a) * amount;
+    // 프레임률이 달라도 움직임의 부드러움이 일정하도록 시간 기반 보간을 사용합니다.
+    const smoothing = (dt, speed) => 1 - Math.exp(-dt * speed);
+
     function getBlendshape(categories, name) {
       return categories?.find(item => item.categoryName === name)?.score ?? 0;
     }
 
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
+    // object-fit: cover로 잘린 영역과 좌우 반전을 모두 반영해 영상 좌표를 화면 좌표로 변환합니다.
+    function videoPointToScreen(point) {
+      const vw = video.videoWidth || 1;
+      const vh = video.videoHeight || 1;
+      const scale = Math.max(innerWidth / vw, innerHeight / vh);
+      const renderedW = vw * scale;
+      const renderedH = vh * scale;
+      const cropX = (renderedW - innerWidth) / 2;
+      const cropY = (renderedH - innerHeight) / 2;
+      return {
+        x: innerWidth - (point.x * renderedW - cropX),
+        y: point.y * renderedH - cropY
+      };
+    }
+
+    function resetFaceTargets() {
+      target.blink = 0;
+      target.mouth = 0;
+      target.gazeLX = target.gazeLY = target.gazeRX = target.gazeRY = 0;
     }
 
     async function start() {
       try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("이 브라우저에서는 카메라 접근을 지원하지 않습니다. HTTPS 환경에서 열어 주세요.");
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30, max: 30 }
+          }
         });
         video.srcObject = stream;
-        await new Promise(resolve => video.addEventListener("loadeddata", resolve, { once: true }));
+        await new Promise((resolve, reject) => {
+          video.addEventListener("loadeddata", resolve, { once: true });
+          video.addEventListener("error", reject, { once: true });
+        });
+        await video.play();
 
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
         const modelBase = "https://storage.googleapis.com/mediapipe-models";
         faceTracker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelBase + "/face_landmarker/face_landmarker/float16/1/face_landmarker.task" },
+          baseOptions: {
+            modelAssetPath: modelBase + "/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU"
+          },
           runningMode: "VIDEO",
           numFaces: 1,
+          minFaceDetectionConfidence: 0.55,
+          minFacePresenceConfidence: 0.55,
+          minTrackingConfidence: 0.55,
           outputFaceBlendshapes: true
         });
         poseTracker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelBase + "/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task" },
+          baseOptions: {
+            modelAssetPath: modelBase + "/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU"
+          },
           runningMode: "VIDEO",
-          numPoses: 1
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
         });
         status.textContent = "얼굴과 움직임 인식 중";
         requestAnimationFrame(track);
       } catch (error) {
         console.error(error);
-        status.textContent = "카메라 또는 인식 모델을 불러오지 못했습니다.";
+        status.textContent = error?.message?.includes("GPU")
+          ? "그래픽 가속 초기화 실패. 브라우저를 새로고침해 주세요."
+          : "카메라 또는 인식 모델을 불러오지 못했습니다.";
       }
     }
 
-    function track() {
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-        lastVideoTime = video.currentTime;
-        const now = performance.now();
-        const faceResult = faceTracker.detectForVideo(video, now);
-        const poseResult = poseTracker.detectForVideo(video, now);
-        const face = faceResult.faceLandmarks?.[0];
-
-        if (face) {
-          hasFace = true;
-          const nose = face[1];
-          const leftEye = face[33];
-          const rightEye = face[263];
-          const eyeMidX = (leftEye.x + rightEye.x) / 2;
-          const eyeMidY = (leftEye.y + rightEye.y) / 2;
-          const eyeDistance = Math.hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y);
-
-          // 좌우 반전된 카메라 화면에 맞춰 좌표를 변환합니다.
-          targetX = (1 - nose.x) * innerWidth;
-          targetY = nose.y * innerHeight - eyeDistance * innerHeight * 0.15;
-
-          const roll = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
-          smoothRoll += (roll - smoothRoll) * 0.25;
-          const faceWidth = Math.hypot(face[234].x - face[454].x);
-          smoothScale += (clamp(faceWidth * 3.0, 0.72, 1.55) - smoothScale) * 0.18;
-
-          const blend = faceResult.faceBlendshapes?.[0]?.categories;
-          const blinkValue = Math.max(getBlendshape(blend, "eyeBlinkLeft"), getBlendshape(blend, "eyeBlinkRight"));
-          const jawValue = getBlendshape(blend, "jawOpen");
-          blink += (clamp(blinkValue, 0, 1) - blink) * 0.45;
-          mouthOpen += (clamp(jawValue, 0, 1) - mouthOpen) * 0.35;
-
-          // 어깨 위치를 이용해 상체가 움직일 때 캐릭터 위치도 자연스럽게 따라갑니다.
-          const pose = poseResult.landmarks?.[0];
-          if (pose && pose[11]?.visibility > 0.35 && pose[12]?.visibility > 0.35) {
-            const shoulderX = (pose[11].x + pose[12].x) / 2;
-            const shoulderY = (pose[11].y + pose[12].y) / 2;
-            targetX = targetX * 0.78 + (1 - shoulderX) * innerWidth * 0.22;
-            targetY = targetY * 0.82 + shoulderY * innerHeight * 0.18 - 105;
-          }
-
-          if (filterOn) potato.style.opacity = "1";
-          eyeLeft.setAttribute("transform", `translate(0 0) scale(1 ${Math.max(0.08, 1 - blink * 0.92)})`);
-          eyeRight.setAttribute("transform", `translate(0 0) scale(1 ${Math.max(0.08, 1 - blink * 0.92)})`);
-
-          // 홍채 위치를 이용해 감자 눈동자도 시선 방향을 따라 움직입니다.
-          if (face[468] && face[473]) {
-            const leftEyeCenterX = (face[33].x + face[133].x) / 2;
-            const leftEyeCenterY = (face[33].y + face[133].y) / 2;
-            const rightEyeCenterX = (face[362].x + face[263].x) / 2;
-            const rightEyeCenterY = (face[362].y + face[263].y) / 2;
-            const leftEyeWidth = Math.abs(face[33].x - face[133].x) / 2;
-            const rightEyeWidth = Math.abs(face[362].x - face[263].x) / 2;
-            const gazeLeftX = clamp((face[468].x - leftEyeCenterX) / Math.max(leftEyeWidth, 0.001), -1, 1) * 7;
-            const gazeLeftY = clamp((face[468].y - leftEyeCenterY) / 0.025, -1, 1) * 5;
-            const gazeRightX = clamp((face[473].x - rightEyeCenterX) / Math.max(rightEyeWidth, 0.001), -1, 1) * 7;
-            const gazeRightY = clamp((face[473].y - rightEyeCenterY) / 0.025, -1, 1) * 5;
-            eyeLeft.setAttribute("cx", String(105 + gazeLeftX));
-            eyeLeft.setAttribute("cy", String(164 + gazeLeftY));
-            eyeRight.setAttribute("cx", String(195 + gazeRightX));
-            eyeRight.setAttribute("cy", String(164 + gazeRightY));
-          }
-
-          const mouthHeight = 3 + mouthOpen * 34;
-          mouth.setAttribute("d", `M137 218 Q150 ${218 + mouthHeight} 163 218`);
-          mouth.setAttribute("stroke-width", String(6 + mouthOpen * 2));
-        } else {
+    function updateFace(faceResult, poseResult, now) {
+      const face = faceResult.faceLandmarks?.[0];
+      if (!face) {
+        if (now - lastFaceTime > 220) {
           hasFace = false;
+          resetFaceTargets();
           potato.style.opacity = "0";
+        }
+        return;
+      }
+
+      hasFace = true;
+      lastFaceTime = now;
+      const nose = face[1];
+      const leftOuter = face[33];
+      const rightOuter = face[263];
+      const leftScreen = videoPointToScreen(leftOuter);
+      const rightScreen = videoPointToScreen(rightOuter);
+      const noseScreen = videoPointToScreen(nose);
+      const eyeDistancePx = Math.hypot(rightScreen.x - leftScreen.x, rightScreen.y - leftScreen.y);
+
+      target.x = noseScreen.x;
+      target.y = noseScreen.y - eyeDistancePx * 0.42;
+
+      // 눈 사이 거리로 얼굴 크기를 추정해 카메라와의 거리에 맞춰 캐릭터 크기를 조절합니다.
+      const baseWidth = Math.min(310, Math.max(150, innerWidth * (innerWidth <= 600 ? 0.42 : 0.23)));
+      target.scale = clamp((eyeDistancePx * 2.25) / baseWidth, 0.68, 1.5);
+
+      // 눈 기울기는 좌우 반전된 화면 좌표에서 계산합니다.
+      target.roll = Math.atan2(rightScreen.y - leftScreen.y, rightScreen.x - leftScreen.x);
+
+      const blend = faceResult.faceBlendshapes?.[0]?.categories;
+      target.blink = clamp(Math.max(
+        getBlendshape(blend, "eyeBlinkLeft"),
+        getBlendshape(blend, "eyeBlinkRight")
+      ), 0, 1);
+      target.mouth = clamp(getBlendshape(blend, "jawOpen"), 0, 1);
+
+      // 홍채를 각 눈의 실제 경계 안에서 정규화해 시선 이동량을 구합니다.
+      if (face.length > 473) {
+        const eyeData = [
+          { iris: face[468], a: face[33], b: face[133], top: face[159], bottom: face[145] },
+          { iris: face[473], a: face[362], b: face[263], top: face[386], bottom: face[374] }
+        ];
+        const gaze = eyeData.map(({ iris, a, b, top, bottom }) => {
+          const centerX = (a.x + b.x) / 2;
+          const centerY = (top.y + bottom.y) / 2;
+          const halfW = Math.max(Math.abs(a.x - b.x) / 2, 0.002);
+          const halfH = Math.max(Math.abs(top.y - bottom.y) / 2, 0.002);
+          return {
+            x: clamp((iris.x - centerX) / halfW, -1, 1) * 7,
+            y: clamp((iris.y - centerY) / halfH, -1, 1) * 5
+          };
+        });
+        target.gazeLX = gaze[0].x;
+        target.gazeLY = gaze[0].y;
+        target.gazeRX = gaze[1].x;
+        target.gazeRY = gaze[1].y;
+      }
+
+      // 어깨 추적은 얼굴 추적을 보조하는 정도로만 반영해 캐릭터가 과하게 흔들리지 않게 합니다.
+      const pose = poseResult.poseLandmarks?.[0];
+      if (pose?.[11] && pose?.[12]) {
+        const leftShoulder = pose[11];
+        const rightShoulder = pose[12];
+        const visible = Math.min(leftShoulder.visibility ?? 0, rightShoulder.visibility ?? 0);
+        if (visible > 0.45) {
+          const shoulders = videoPointToScreen({
+            x: (leftShoulder.x + rightShoulder.x) / 2,
+            y: (leftShoulder.y + rightShoulder.y) / 2
+          });
+          target.x = mix(target.x, shoulders.x, 0.10);
+          target.y = mix(target.y, shoulders.y - eyeDistancePx * 1.25, 0.10);
         }
       }
 
-      smoothX += (targetX - smoothX) * 0.22;
-      smoothY += (targetY - smoothY) * 0.22;
-      potato.style.left = smoothX + "px";
-      potato.style.top = smoothY + "px";
-      potato.style.transform = `translate(-50%, -50%) rotate(${smoothRoll * 180 / Math.PI}deg) scale(${smoothScale})`;
+      if (filterOn) potato.style.opacity = "1";
+    }
 
+    function render(now) {
+      const dt = Math.min((now - (lastFrameTime || now)) / 1000, 0.05);
+      lastFrameTime = now;
+      const positionAlpha = smoothing(dt, 13);
+      const detailAlpha = smoothing(dt, 20);
+      const scaleAlpha = smoothing(dt, 8);
+
+      motion.x = mix(motion.x, target.x, positionAlpha);
+      motion.y = mix(motion.y, target.y, positionAlpha);
+      motion.roll = mix(motion.roll, target.roll, positionAlpha);
+      motion.scale = mix(motion.scale, target.scale, scaleAlpha);
+      motion.gazeLX = mix(motion.gazeLX, target.gazeLX, detailAlpha);
+      motion.gazeLY = mix(motion.gazeLY, target.gazeLY, detailAlpha);
+      motion.gazeRX = mix(motion.gazeRX, target.gazeRX, detailAlpha);
+      motion.gazeRY = mix(motion.gazeRY, target.gazeRY, detailAlpha);
+      motion.blink = mix(motion.blink, target.blink, detailAlpha);
+      motion.mouth = mix(motion.mouth, target.mouth, detailAlpha);
+
+      potato.style.left = motion.x + "px";
+      potato.style.top = motion.y + "px";
+      potato.style.transform =
+        `translate(-50%, -50%) rotate(${motion.roll * 180 / Math.PI}deg) scale(${motion.scale})`;
+
+      const eyeY = Math.max(0.08, 1 - motion.blink * 0.92);
+      eyeLeft.setAttribute("transform", `translate(${motion.gazeLX} ${motion.gazeLY}) scale(1 ${eyeY})`);
+      eyeRight.setAttribute("transform", `translate(${motion.gazeRX} ${motion.gazeRY}) scale(1 ${eyeY})`);
+
+      const mouthHeight = 3 + motion.mouth * 34;
+      mouth.setAttribute("d", `M137 218 Q150 ${218 + mouthHeight} 163 218`);
+      mouth.setAttribute("stroke-width", String(6 + motion.mouth * 2));
+    }
+
+    function track(now) {
+      // 화면 렌더링은 매 프레임, 무거운 AI 추론은 초당 최대 약 30회만 실행합니다.
+      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && now - lastInferenceTime >= 30) {
+        lastVideoTime = video.currentTime;
+        lastInferenceTime = now;
+        try {
+          const faceResult = faceTracker.detectForVideo(video, now);
+          const poseResult = poseTracker.detectForVideo(video, now);
+          updateFace(faceResult, poseResult, now);
+        } catch (error) {
+          console.warn("Tracking frame skipped:", error);
+        }
+      }
+      render(now);
       requestAnimationFrame(track);
     }
 
     window.addEventListener("resize", () => {
-      targetX = innerWidth / 2;
-      targetY = innerHeight / 2;
+      target.x = innerWidth / 2;
+      target.y = innerHeight / 2;
     });
 
     start();
