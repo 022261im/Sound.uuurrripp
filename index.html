@@ -11,10 +11,11 @@
     body { font-family:Arial,sans-serif; }
     .stage { position:relative; width:100vw; height:100dvh; overflow:hidden; background:#171717; }
     #output { position:absolute; inset:0; width:100%; height:100%; display:block; }
+    .stage { background:#dce8e5; }
     #camera { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
     #avatar-layer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
     #potato {
-      position:absolute; left:50%; top:0; width:420px; aspect-ratio:0.72;
+      position:absolute; left:50%; top:0; width:min(54vw, 700px); aspect-ratio:0.72;
       transform:translate(-50%,0); transform-origin:50% 30%;
       opacity:0; will-change:left,top,width,transform,opacity;
       filter:drop-shadow(0 12px 16px rgba(65,39,17,.15));
@@ -51,7 +52,7 @@
       #background-picker { right:14px; bottom:78px; gap:7px; padding:8px 10px; }
       .background-choice { width:25px; height:25px; }
       #filter-toggle { right:14px; bottom:14px; padding:11px 18px; }
-      #potato { width: min(108vw, 520px); }
+      #potato { width: min(88vw, 520px); }
     }
   </style>
 </head>
@@ -120,12 +121,12 @@
   </main>
 
   <script type="module">
-    import { FaceLandmarker, PoseLandmarker, ImageSegmenter, FilesetResolver }
+    import { FaceLandmarker, PoseLandmarker, FilesetResolver }
       from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
     const video = document.getElementById("camera");
     const output = document.getElementById("output");
-    const out = output.getContext("2d", { alpha:false });
+    const ctx = output.getContext("2d");
     const potato = document.getElementById("potato");
     const toggle = document.getElementById("filter-toggle");
     const status = document.getElementById("status");
@@ -135,133 +136,72 @@
     const mouthOpen = document.getElementById("mouth-open");
     const bgButtons = [...document.querySelectorAll(".background-choice")];
 
-    const personCanvas = document.createElement("canvas");
-    const personCtx = personCanvas.getContext("2d");
-    const maskCanvas = document.createElement("canvas");
-    const maskCtx = maskCanvas.getContext("2d", { willReadFrequently:true });
-
-    let faceTracker, poseTracker, segmenter;
-    let filterOn = true, backgroundColor = "#dce8e5";
+    let faceTracker, poseTracker;
+    let filterOn = true;
+    let backgroundColor = "#dce8e5";
     let lastVideoTime = -1, lastInferenceTime = 0, lastFrameTime = 0;
-    let lastFaceTime = 0, hasFace = false, latestMask = null;
-    let maskWidth = 0, maskHeight = 0;
+    let lastFaceTime = 0, hasFace = false;
 
     const motion = {
-      x:innerWidth/2, top:0, width:420, roll:0, scale:1,
-      gazeLX:0, gazeLY:0, gazeRX:0, gazeRY:0, blink:0, mouth:0
+      x: innerWidth/2, top: 0, width: Math.min(innerWidth*.54,700),
+      roll: 0, gazeLX:0, gazeLY:0, gazeRX:0, gazeRY:0, blink:0, mouth:0
     };
     const target = { ...motion };
-
     const clamp = (v,min,max) => Math.max(min,Math.min(max,v));
     const mix = (a,b,t) => a+(b-a)*t;
     const smoothing = (dt,speed) => 1-Math.exp(-dt*speed);
-    const getBlendshape = (categories,name) =>
-      categories?.find(item => item.categoryName===name)?.score ?? 0;
+    const blendValue = (items,name) => items?.find(x=>x.categoryName===name)?.score ?? 0;
 
-    bgButtons.forEach(button => button.addEventListener("click", () => {
-      backgroundColor = button.dataset.bg;
-      bgButtons.forEach(item => item.setAttribute("aria-pressed", String(item===button)));
-    }));
-
-    toggle.addEventListener("click", () => {
-      filterOn = !filterOn;
-      toggle.textContent = filterOn ? "필터 끄기" : "필터 켜기";
-      toggle.setAttribute("aria-pressed", String(filterOn));
-      potato.style.opacity = filterOn && hasFace ? "1" : "0";
-    });
-
-    function resizeCanvases() {
-      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    function resizeCanvas() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       const w = Math.round(innerWidth*dpr), h = Math.round(innerHeight*dpr);
       if (output.width!==w || output.height!==h) {
         output.width=w; output.height=h;
-        personCanvas.width=w; personCanvas.height=h;
       }
     }
 
-    function drawCover(ctx, source, mirror=false) {
-      const w=output.width, h=output.height;
-      const sw=source.videoWidth || source.width, sh=source.videoHeight || source.height;
-      const scale=Math.max(w/sw,h/sh), dw=sw*scale, dh=sh*scale;
-      const dx=(w-dw)/2, dy=(h-dh)/2;
-      ctx.save();
-      if (mirror) {
-        ctx.translate(w,0);
-        ctx.scale(-1,1);
-      }
-      ctx.drawImage(source,dx,dy,dw,dh);
-      ctx.restore();
-    }
-
-    function updateMask(mask) {
-      if (!mask) return;
-      const width=mask.width, height=mask.height;
-      const values=mask.getAsUint8Array();
-      if (maskCanvas.width!==width || maskCanvas.height!==height) {
-        maskCanvas.width=width; maskCanvas.height=height;
-      }
-      const pixels=maskCtx.createImageData(width,height);
-      for (let i=0;i<values.length;i++) {
-        const alpha=values[i] > 0 ? 255 : 0;
-        const p=i*4;
-        pixels.data[p]=255; pixels.data[p+1]=255; pixels.data[p+2]=255;
-        pixels.data[p+3]=alpha;
-      }
-      maskCtx.putImageData(pixels,0,0);
-      // 가장자리를 약간 부드럽게 만들어 인물 테두리의 계단 현상을 완화합니다.
-      personCtx.save();
-      personCtx.globalCompositeOperation="destination-in";
-      personCtx.filter="blur(2px)";
-      drawCover(personCtx,maskCanvas,true);
-      personCtx.restore();
-    }
-
-    function renderCamera() {
-      resizeCanvases();
-      const w=output.width,h=output.height;
-      out.clearRect(0,0,w,h);
-
-      if (!filterOn) {
-        drawCover(out,video,true);
-        return;
-      }
-
-      out.fillStyle=backgroundColor;
-      out.fillRect(0,0,w,h);
-      if (latestMask) {
-        personCtx.clearRect(0,0,w,h);
-        drawCover(personCtx,video,true);
-        personCtx.globalCompositeOperation="destination-in";
-        personCtx.save();
-        personCtx.filter="blur(1.5px)";
-        drawCover(personCtx,maskCanvas,true);
-        personCtx.restore();
-        personCtx.globalCompositeOperation="source-over";
-        out.drawImage(personCanvas,0,0);
-      }
+    // 카메라 영상은 배경으로 절대 사용하지 않습니다. 선택한 단색만 전체 화면에 출력합니다.
+    function drawBackground() {
+      resizeCanvas();
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(0,0,output.width,output.height);
     }
 
     function videoPointToScreen(point) {
       const vw=video.videoWidth||1, vh=video.videoHeight||1;
       const scale=Math.max(innerWidth/vw,innerHeight/vh);
-      const renderedW=vw*scale, renderedH=vh*scale;
-      const cropX=(renderedW-innerWidth)/2, cropY=(renderedH-innerHeight)/2;
+      const rw=vw*scale, rh=vh*scale;
+      const cropX=(rw-innerWidth)/2, cropY=(rh-innerHeight)/2;
       return {
-        x:innerWidth-(point.x*renderedW-cropX),
-        y:point.y*renderedH-cropY
+        x: innerWidth-(point.x*rw-cropX),
+        y: point.y*rh-cropY
       };
     }
 
-    function resetFaceTargets() {
-      target.blink=0; target.mouth=0;
-      target.gazeLX=target.gazeLY=target.gazeRX=target.gazeRY=0;
-    }
+    bgButtons.forEach(button=>button.addEventListener("click",()=>{
+      backgroundColor=button.dataset.bg;
+      bgButtons.forEach(b=>b.setAttribute("aria-pressed",String(b===button)));
+      drawBackground();
+    }));
 
-    async function createTrackerWithFallback(Tracker,vision,options) {
+    toggle.addEventListener("click",()=>{
+      filterOn=!filterOn;
+      toggle.textContent=filterOn?"필터 끄기":"필터 켜기";
+      toggle.setAttribute("aria-pressed",String(filterOn));
+      if (filterOn) {
+        drawBackground();
+        potato.style.opacity=hasFace?"1":"0";
+      } else {
+        potato.style.opacity="0";
+        // 필터를 끄면 원본 카메라를 캔버스에 표시합니다.
+      }
+    });
+
+    async function createTracker(Tracker,vision,options) {
       try { return await Tracker.createFromOptions(vision,options); }
-      catch (error) {
-        console.warn("GPU 초기화 실패, CPU로 전환합니다.",error);
-        return await Tracker.createFromOptions(vision,{
+      catch (gpuError) {
+        console.warn("GPU 초기화 실패. CPU로 다시 시도합니다.",gpuError);
+        return Tracker.createFromOptions(vision,{
           ...options,baseOptions:{...options.baseOptions,delegate:"CPU"}
         });
       }
@@ -269,7 +209,6 @@
 
     async function start() {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error("카메라 권한을 사용할 수 없습니다.");
         const stream=await navigator.mediaDevices.getUserMedia({
           audio:false,
           video:{facingMode:"user",width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30,max:30}}
@@ -284,25 +223,21 @@
         const vision=await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
-        const modelBase="https://storage.googleapis.com/mediapipe-models";
-        faceTracker=await createTrackerWithFallback(FaceLandmarker,vision,{
-          baseOptions:{modelAssetPath:modelBase+"/face_landmarker/face_landmarker/float16/1/face_landmarker.task",delegate:"GPU"},
-          runningMode:"VIDEO",numFaces:1,minFaceDetectionConfidence:.55,
-          minFacePresenceConfidence:.55,minTrackingConfidence:.55,outputFaceBlendshapes:true
+        const base="https://storage.googleapis.com/mediapipe-models";
+        faceTracker=await createTracker(FaceLandmarker,vision,{
+          baseOptions:{modelAssetPath:base+"/face_landmarker/face_landmarker/float16/1/face_landmarker.task",delegate:"GPU"},
+          runningMode:"VIDEO",numFaces:1,
+          minFaceDetectionConfidence:.55,minFacePresenceConfidence:.55,
+          minTrackingConfidence:.55,outputFaceBlendshapes:true
         });
-        poseTracker=await createTrackerWithFallback(PoseLandmarker,vision,{
-          baseOptions:{modelAssetPath:modelBase+"/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:"GPU"},
-          runningMode:"VIDEO",numPoses:1,minPoseDetectionConfidence:.5,
-          minPosePresenceConfidence:.5,minTrackingConfidence:.5
+        poseTracker=await createTracker(PoseLandmarker,vision,{
+          baseOptions:{modelAssetPath:base+"/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:"GPU"},
+          runningMode:"VIDEO",numPoses:1,
+          minPoseDetectionConfidence:.5,minPosePresenceConfidence:.5,minTrackingConfidence:.5
         });
-        segmenter=await createTrackerWithFallback(ImageSegmenter,vision,{
-          baseOptions:{
-            modelAssetPath:modelBase+"/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite",
-            delegate:"GPU"
-          },
-          runningMode:"VIDEO",outputCategoryMask:true,outputConfidenceMasks:false
-        });
-        status.textContent="얼굴과 배경 분리 인식 중";
+
+        status.textContent="얼굴과 상체 움직임 인식 중";
+        drawBackground();
         requestAnimationFrame(track);
       } catch(error) {
         console.error(error);
@@ -310,136 +245,145 @@
       }
     }
 
-    function updateFace(faceResult,poseResult,now) {
+    function updateTracking(faceResult,poseResult,now) {
       const face=faceResult.faceLandmarks?.[0];
       if (!face) {
-        if (now-lastFaceTime>260) {
-          hasFace=false; resetFaceTargets(); potato.style.opacity="0";
+        if (now-lastFaceTime>350) {
+          hasFace=false;
+          potato.style.opacity="0";
+          target.blink=target.mouth=0;
+          target.gazeLX=target.gazeLY=target.gazeRX=target.gazeRY=0;
         }
         return;
       }
-      hasFace=true; lastFaceTime=now;
-      const noseScreen=videoPointToScreen(face[1]);
-      const leftScreen=videoPointToScreen(face[33]);
-      const rightScreen=videoPointToScreen(face[263]);
-      const eyeDistance=Math.hypot(rightScreen.x-leftScreen.x,rightScreen.y-leftScreen.y);
+
+      hasFace=true;
+      lastFaceTime=now;
+      const nose=videoPointToScreen(face[1]);
+      const leftEye=videoPointToScreen(face[33]);
+      const rightEye=videoPointToScreen(face[263]);
+      const eyeDistance=Math.hypot(rightEye.x-leftEye.x,rightEye.y-leftEye.y);
       const pose=poseResult.poseLandmarks?.[0];
 
-      let centerX=noseScreen.x;
-      let shoulderY=noseScreen.y+eyeDistance*2.2;
-      let shoulderWidth=eyeDistance*4.8;
+      // 얼굴 추적은 캐릭터의 중심과 표정을, 어깨 추적은 몸통의 폭과 기울기를 결정합니다.
+      let centerX=nose.x;
+      let shoulderLineY=nose.y+eyeDistance*2.25;
+      let shoulderSpan=eyeDistance*2.7;
+      let shoulderTilt=0;
+
       if (pose?.[11] && pose?.[12]) {
-        const l=pose[11],r=pose[12];
+        const l=pose[11], r=pose[12];
         const visibility=Math.min(l.visibility??0,r.visibility??0);
         if (visibility>.35) {
-          const ls=videoPointToScreen(l),rs=videoPointToScreen(r);
+          const ls=videoPointToScreen(l), rs=videoPointToScreen(r);
           centerX=(ls.x+rs.x)/2;
-          shoulderY=(ls.y+rs.y)/2;
-          shoulderWidth=Math.hypot(rs.x-ls.x,rs.y-ls.y);
+          shoulderLineY=(ls.y+rs.y)/2;
+          shoulderSpan=Math.hypot(rs.x-ls.x,rs.y-ls.y);
+          shoulderTilt=Math.atan2(rs.y-ls.y,rs.x-ls.x);
         }
       }
 
-      // 상체 너비를 기준으로 감자 몸통을 배치해 머리만 떠다니는 느낌을 줄입니다.
-      target.width=clamp(shoulderWidth*2.05,Math.min(300,innerWidth*.78),innerWidth*1.12);
+      // 몸통은 화면 폭의 약 40~58% 안에서 유지해 지나치게 확대되지 않도록 합니다.
+      const minWidth=Math.min(360,innerWidth*.42);
+      const maxWidth=Math.min(760,innerWidth*.68);
+      target.width=clamp(shoulderSpan*1.65,minWidth,maxWidth);
       const avatarHeight=target.width/0.72;
-      const headTop=noseScreen.y-eyeDistance*2.65;
+      const foreheadY=nose.y-eyeDistance*1.85;
       target.x=centerX;
-      target.top=clamp(headTop, -avatarHeight*.04, innerHeight*.28);
-      target.roll=clamp(Math.atan2(rightScreen.y-leftScreen.y,rightScreen.x-leftScreen.x),-.22,.22);
-      target.scale=1;
+      target.top=clamp(foreheadY,-avatarHeight*.08,innerHeight*.18);
+      target.roll=clamp(shoulderTilt*.28+Math.atan2(rightEye.y-leftEye.y,rightEye.x-leftEye.x)*.72,-.18,.18);
 
-      const blend=faceResult.faceBlendshapes?.[0]?.categories;
-      target.blink=clamp(Math.max(getBlendshape(blend,"eyeBlinkLeft"),getBlendshape(blend,"eyeBlinkRight")),0,1);
-      target.mouth=clamp(getBlendshape(blend,"jawOpen"),0,1);
+      const categories=faceResult.faceBlendshapes?.[0]?.categories;
+      target.blink=clamp(Math.max(blendValue(categories,"eyeBlinkLeft"),blendValue(categories,"eyeBlinkRight")),0,1);
+      target.mouth=clamp(blendValue(categories,"jawOpen"),0,1);
 
       if (face.length>473) {
         const eyes=[
-          {iris:face[468],a:face[33],b:face[133],top:face[159],bottom:face[145]},
-          {iris:face[473],a:face[362],b:face[263],top:face[386],bottom:face[374]}
+          {iris:face[468],a:face[33],b:face[133],t:face[159],bt:face[145]},
+          {iris:face[473],a:face[362],b:face[263],t:face[386],bt:face[374]}
         ];
-        const gaze=eyes.map(({iris,a,b,top,bottom})=>{
-          const cx=(a.x+b.x)/2,cy=(top.y+bottom.y)/2;
-          const hw=Math.max(Math.abs(a.x-b.x)/2,.002);
-          const hh=Math.max(Math.abs(top.y-bottom.y)/2,.002);
-          return {x:clamp((iris.x-cx)/hw,-1,1)*8,y:clamp((iris.y-cy)/hh,-1,1)*6};
+        const g=eyes.map(e=>{
+          const cx=(e.a.x+e.b.x)/2, cy=(e.t.y+e.bt.y)/2;
+          const hw=Math.max(Math.abs(e.a.x-e.b.x)/2,.002);
+          const hh=Math.max(Math.abs(e.t.y-e.bt.y)/2,.002);
+          return {x:clamp((e.iris.x-cx)/hw,-1,1)*8,y:clamp((e.iris.y-cy)/hh,-1,1)*6};
         });
-        target.gazeLX=gaze[0].x; target.gazeLY=gaze[0].y;
-        target.gazeRX=gaze[1].x; target.gazeRY=gaze[1].y;
+        target.gazeLX=g[0].x; target.gazeLY=g[0].y;
+        target.gazeRX=g[1].x; target.gazeRY=g[1].y;
       }
+
       potato.style.opacity=filterOn?"1":"0";
     }
 
     function renderAvatar(now) {
       const dt=Math.min((now-(lastFrameTime||now))/1000,.05);
       lastFrameTime=now;
-      const p=smoothing(dt,11),d=smoothing(dt,19),sz=smoothing(dt,8);
+      const p=smoothing(dt,9), details=smoothing(dt,18), size=smoothing(dt,6);
       motion.x=mix(motion.x,target.x,p);
       motion.top=mix(motion.top,target.top,p);
-      motion.width=mix(motion.width,target.width,sz);
+      motion.width=mix(motion.width,target.width,size);
       motion.roll=mix(motion.roll,target.roll,p);
-      motion.gazeLX=mix(motion.gazeLX,target.gazeLX,d);
-      motion.gazeLY=mix(motion.gazeLY,target.gazeLY,d);
-      motion.gazeRX=mix(motion.gazeRX,target.gazeRX,d);
-      motion.gazeRY=mix(motion.gazeRY,target.gazeRY,d);
-      motion.blink=mix(motion.blink,target.blink,d);
-      motion.mouth=mix(motion.mouth,target.mouth,d);
+      for (const key of ["gazeLX","gazeLY","gazeRX","gazeRY","blink","mouth"]) {
+        motion[key]=mix(motion[key],target[key],details);
+      }
 
       potato.style.left=motion.x+"px";
       potato.style.top=motion.top+"px";
       potato.style.width=motion.width+"px";
       potato.style.transform=`translate(-50%,0) rotate(${motion.roll*180/Math.PI}deg)`;
 
-      const eyeY=Math.max(.08,1-motion.blink*.92);
-      eyeLeft.setAttribute("transform",`translate(${motion.gazeLX} ${motion.gazeLY}) scale(1 ${eyeY})`);
-      eyeRight.setAttribute("transform",`translate(${motion.gazeRX} ${motion.gazeRY}) scale(1 ${eyeY})`);
+      const eyeScale=Math.max(.08,1-motion.blink*.92);
+      eyeLeft.setAttribute("transform",`translate(${motion.gazeLX} ${motion.gazeLY}) scale(1 ${eyeScale})`);
+      eyeRight.setAttribute("transform",`translate(${motion.gazeRX} ${motion.gazeRY}) scale(1 ${eyeScale})`);
 
-      // 닫힌 입은 아래로 볼록한 미소, 입을 벌리면 별도의 타원형 입으로 전환합니다.
-      if (motion.mouth<.16) {
-        mouth.style.opacity="1"; mouthOpen.style.opacity="0";
-        mouth.setAttribute("d","M215 350 Q250 384 285 350");
+      // SVG 경로의 시작과 끝을 같은 높이로 두어 입이 뒤집혀 보이지 않게 합니다.
+      if (motion.mouth<.18) {
+        mouth.style.opacity="1";
+        mouthOpen.style.opacity="0";
+        mouth.setAttribute("d","M215 350 Q250 382 285 350");
       } else {
         mouth.style.opacity="0";
-        mouthOpen.style.opacity=String(clamp(motion.mouth*1.15,0,1));
-        mouthOpen.setAttribute("ry",String(4+motion.mouth*25));
+        mouthOpen.style.opacity=String(clamp((motion.mouth-.12)*1.25,0,1));
+        mouthOpen.setAttribute("ry",String(5+motion.mouth*24));
       }
     }
 
     function track(now) {
-      if (video.readyState>=2 && video.currentTime!==lastVideoTime && now-lastInferenceTime>=45) {
-        lastVideoTime=video.currentTime; lastInferenceTime=now;
+      if (video.readyState>=2 && video.currentTime!==lastVideoTime && now-lastInferenceTime>=40) {
+        lastVideoTime=video.currentTime;
+        lastInferenceTime=now;
         try {
           const faceResult=faceTracker.detectForVideo(video,now);
           const poseResult=poseTracker.detectForVideo(video,now);
-          updateFace(faceResult,poseResult,now);
-          const segmentation=segmenter.segmentForVideo(video,now);
-          const categoryMask=segmentation.categoryMask;
-          if (categoryMask) {
-            const width=categoryMask.width,height=categoryMask.height;
-            if (maskCanvas.width!==width || maskCanvas.height!==height) {
-              maskCanvas.width=width; maskCanvas.height=height;
-            }
-            const values=categoryMask.getAsUint8Array();
-            const pixels=maskCtx.createImageData(width,height);
-            for (let i=0;i<values.length;i++) {
-              const p=i*4;
-              pixels.data[p]=255; pixels.data[p+1]=255; pixels.data[p+2]=255;
-              pixels.data[p+3]=values[i]===0?0:255;
-            }
-            maskCtx.putImageData(pixels,0,0);
-            latestMask=maskCanvas;
-            categoryMask.close?.();
-          }
-        } catch(error) { console.warn("인식 프레임을 건너뜁니다.",error); }
+          updateTracking(faceResult,poseResult,now);
+        } catch(error) {
+          console.warn("인식 프레임을 건너뜁니다.",error);
+        }
       }
-      renderCamera();
+
+      if (filterOn) drawBackground();
+      else {
+        resizeCanvas();
+        ctx.save();
+        ctx.translate(output.width,0);
+        ctx.scale(-1,1);
+        const scale=Math.max(output.width/video.videoWidth,output.height/video.videoHeight);
+        const w=video.videoWidth*scale,h=video.videoHeight*scale;
+        ctx.drawImage(video,(output.width-w)/2,(output.height-h)/2,w,h);
+        ctx.restore();
+      }
+
       renderAvatar(now);
       requestAnimationFrame(track);
     }
 
     window.addEventListener("resize",()=>{
       target.x=innerWidth/2;
-      resizeCanvases();
+      target.width=Math.min(innerWidth*.54,700);
+      drawBackground();
     });
+
+    drawBackground();
     start();
   </script>
 </body>
