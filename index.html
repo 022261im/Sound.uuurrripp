@@ -7,98 +7,161 @@
   <title>Potato Virtual</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; }
-    body { font-family: Arial, sans-serif; }
-    .stage { position: relative; width: 100vw; height: 100dvh; overflow: hidden; background: #171717; }
-    #camera {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; transform: scaleX(-1); background: #171717;
-    }
-    #avatar-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#171717; }
+    body { font-family:Arial,sans-serif; }
+    .stage { position:relative; width:100vw; height:100dvh; overflow:hidden; background:#171717; }
+    #output { position:absolute; inset:0; width:100%; height:100%; display:block; }
+    #camera { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+    #avatar-layer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
     #potato {
-      position: absolute; left: 50%; top: 50%; width: clamp(150px, 23vw, 310px);
-      aspect-ratio: 0.82; transform: translate(-50%, -50%);
-      transform-origin: 50% 55%; opacity: 0; will-change: left, top, transform, opacity;
-      filter: drop-shadow(0 9px 12px rgba(0,0,0,.18));
+      position:absolute; left:50%; top:0; width:420px; aspect-ratio:0.72;
+      transform:translate(-50%,0); transform-origin:50% 30%;
+      opacity:0; will-change:left,top,width,transform,opacity;
+      filter:drop-shadow(0 12px 16px rgba(65,39,17,.15));
     }
-    #potato svg { width: 100%; height: 100%; overflow: visible; }
-    .eye { transform-box: fill-box; transform-origin: center; }
-    #mouth { transform-box: fill-box; transform-origin: center; }
+    #potato svg { width:100%; height:100%; display:block; overflow:visible; }
+    .eye { transform-box:fill-box; transform-origin:center; }
+    #background-picker {
+      position:absolute; z-index:6; right:20px; bottom:88px;
+      display:flex; align-items:center; gap:8px;
+      padding:9px 11px; border:1px solid rgba(255,255,255,.18);
+      border-radius:18px; background:rgba(20,20,20,.72);
+      backdrop-filter:blur(12px);
+    }
+    .background-choice {
+      width:27px; height:27px; border-radius:50%; border:2px solid rgba(255,255,255,.55);
+      padding:0; cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.25);
+    }
+    .background-choice[aria-pressed="true"] { outline:2px solid white; outline-offset:3px; }
+    .background-choice:focus-visible { outline:3px solid white; outline-offset:4px; }
     #filter-toggle {
-      position: absolute; z-index: 5; right: 22px; bottom: 22px;
-      border: 1px solid rgba(255,255,255,.25); border-radius: 999px;
-      padding: 13px 22px; color: white; background: rgba(20,20,20,.72);
-      backdrop-filter: blur(12px); font-size: 15px; font-weight: 650;
-      cursor: pointer;
+      position:absolute; z-index:6; right:20px; bottom:20px;
+      border:1px solid rgba(255,255,255,.25); border-radius:999px;
+      padding:13px 22px; color:white; background:rgba(20,20,20,.76);
+      backdrop-filter:blur(12px); font-size:15px; font-weight:650; cursor:pointer;
     }
-    #filter-toggle:hover { background: rgba(20,20,20,.9); }
-    #filter-toggle:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+    #filter-toggle:hover { background:rgba(20,20,20,.94); }
+    #filter-toggle:focus-visible { outline:3px solid white; outline-offset:3px; }
     #status {
-      position: absolute; z-index: 4; left: 18px; bottom: 22px;
-      color: rgba(255,255,255,.78); font-size: 12px;
-      text-shadow: 0 1px 5px #000; pointer-events: none;
+      position:absolute; z-index:4; left:18px; bottom:20px;
+      color:rgba(255,255,255,.8); font-size:12px;
+      text-shadow:0 1px 5px #000; pointer-events:none;
     }
-    @media (max-width: 600px) {
-      #filter-toggle { right: 14px; bottom: 14px; padding: 11px 18px; }
-      #status { left: 14px; bottom: 18px; }
-      #potato { width: clamp(145px, 42vw, 230px); }
+    @media(max-width:600px) {
+      #background-picker { right:14px; bottom:78px; gap:7px; padding:8px 10px; }
+      .background-choice { width:25px; height:25px; }
+      #filter-toggle { right:14px; bottom:14px; padding:11px 18px; }
+      #potato { width: min(108vw, 520px); }
     }
   </style>
 </head>
 <body>
   <main class="stage">
+    <canvas id="output"></canvas>
     <video id="camera" autoplay playsinline muted></video>
+
     <div id="avatar-layer" aria-hidden="true">
       <div id="potato">
-        <svg viewBox="0 0 300 360" role="img" aria-label="감자 캐릭터">
+        <svg viewBox="0 0 500 700">
           <defs>
-            <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#e7c58e"/>
-              <stop offset=".55" stop-color="#c99a5d"/>
-              <stop offset="1" stop-color="#a97843"/>
+            <linearGradient id="skin" x1="0" y1="0" x2="0.85" y2="1">
+              <stop offset="0" stop-color="#e9c58e"/>
+              <stop offset=".52" stop-color="#d7aa70"/>
+              <stop offset="1" stop-color="#bd8951"/>
+            </linearGradient>
+            <linearGradient id="shade" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#a97843" stop-opacity=".08"/>
+              <stop offset="1" stop-color="#81552e" stop-opacity=".24"/>
             </linearGradient>
           </defs>
-          <path d="M150 20 C205 12 257 54 273 119 C289 184 272 270 226 316 C188 354 108 351 66 318 C20 282 13 202 29 132 C44 68 91 26 150 20Z"
-            fill="url(#skin)" stroke="#8f6239" stroke-width="5"/>
-          <path d="M58 99 Q75 82 87 91 M219 70 Q235 78 239 94 M42 229 Q55 219 64 230 M227 275 Q242 263 250 276"
-            fill="none" stroke="#ae804e" stroke-width="5" stroke-linecap="round" opacity=".55"/>
-          <ellipse class="eye" id="eye-left" cx="105" cy="164" rx="8" ry="10" fill="#292019"/>
-          <ellipse class="eye" id="eye-right" cx="195" cy="164" rx="8" ry="10" fill="#292019"/>
-          <path id="mouth" d="M137 218 Q150 224 163 218" fill="none" stroke="#553322" stroke-width="6" stroke-linecap="round"/>
+          <!-- 머리부터 어깨와 상체까지 이어지는 큰 감자 실루엣 -->
+          <path d="M250 10
+            C365 4 457 75 480 190
+            C501 293 476 405 457 500
+            C445 565 468 630 440 676
+            C408 724 92 724 60 676
+            C32 630 55 565 43 500
+            C24 405 -1 293 20 190
+            C43 75 135 4 250 10Z"
+            fill="url(#skin)" stroke="#a87948" stroke-width="7"/>
+          <path d="M250 14
+            C365 8 451 80 472 190
+            C490 286 468 402 449 496
+            C438 562 458 625 431 665
+            C395 700 105 700 69 665
+            C42 625 62 562 51 496
+            C32 402 10 286 28 190
+            C49 80 135 8 250 14Z"
+            fill="url(#shade)"/>
+          <!-- 감자 표면의 작은 점 -->
+          <path d="M93 150 Q111 126 132 137 M369 115 Q391 125 402 148
+                   M74 440 Q92 457 108 448 M389 468 Q411 481 426 462"
+            fill="none" stroke="#b88752" stroke-width="13" stroke-linecap="round" opacity=".28"/>
+          <ellipse class="eye" id="eye-left" cx="185" cy="286" rx="11" ry="14" fill="#302219"/>
+          <ellipse class="eye" id="eye-right" cx="315" cy="286" rx="11" ry="14" fill="#302219"/>
+          <path id="mouth" d="M215 350 Q250 382 285 350" fill="none"
+            stroke="#583827" stroke-width="8" stroke-linecap="round"/>
+          <ellipse id="mouth-open" cx="250" cy="362" rx="21" ry="4"
+            fill="#583827" opacity="0" />
         </svg>
       </div>
     </div>
+
     <div id="status">카메라 연결 중...</div>
+    <div id="background-picker" aria-label="배경 선택">
+      <button class="background-choice" type="button" data-bg="#dce8e5" aria-label="연한 민트 배경" title="민트" style="background:#dce8e5" aria-pressed="true"></button>
+      <button class="background-choice" type="button" data-bg="#e8d8c4" aria-label="베이지 배경" title="베이지" style="background:#e8d8c4" aria-pressed="false"></button>
+      <button class="background-choice" type="button" data-bg="#cbd8ed" aria-label="하늘색 배경" title="하늘색" style="background:#cbd8ed" aria-pressed="false"></button>
+      <button class="background-choice" type="button" data-bg="#e8cbd0" aria-label="분홍 배경" title="분홍" style="background:#e8cbd0" aria-pressed="false"></button>
+      <button class="background-choice" type="button" data-bg="#d5d5d5" aria-label="회색 배경" title="회색" style="background:#d5d5d5" aria-pressed="false"></button>
+      <button class="background-choice" type="button" data-bg="#252b35" aria-label="짙은 남색 배경" title="다크" style="background:#252b35" aria-pressed="false"></button>
+    </div>
     <button id="filter-toggle" type="button" aria-pressed="true">필터 끄기</button>
   </main>
 
   <script type="module">
-    import { FaceLandmarker, PoseLandmarker, FilesetResolver }
+    import { FaceLandmarker, PoseLandmarker, ImageSegmenter, FilesetResolver }
       from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
     const video = document.getElementById("camera");
+    const output = document.getElementById("output");
+    const out = output.getContext("2d", { alpha:false });
     const potato = document.getElementById("potato");
     const toggle = document.getElementById("filter-toggle");
     const status = document.getElementById("status");
     const eyeLeft = document.getElementById("eye-left");
     const eyeRight = document.getElementById("eye-right");
     const mouth = document.getElementById("mouth");
+    const mouthOpen = document.getElementById("mouth-open");
+    const bgButtons = [...document.querySelectorAll(".background-choice")];
 
-    let faceTracker, poseTracker;
-    let filterOn = true;
-    let lastVideoTime = -1;
-    let lastInferenceTime = 0;
-    let lastFrameTime = 0;
-    let lastFaceTime = 0;
-    let hasFace = false;
+    const personCanvas = document.createElement("canvas");
+    const personCtx = personCanvas.getContext("2d");
+    const maskCanvas = document.createElement("canvas");
+    const maskCtx = maskCanvas.getContext("2d", { willReadFrequently:true });
+
+    let faceTracker, poseTracker, segmenter;
+    let filterOn = true, backgroundColor = "#dce8e5";
+    let lastVideoTime = -1, lastInferenceTime = 0, lastFrameTime = 0;
+    let lastFaceTime = 0, hasFace = false, latestMask = null;
+    let maskWidth = 0, maskHeight = 0;
 
     const motion = {
-      x: innerWidth / 2, y: innerHeight / 2,
-      roll: 0, scale: 1,
-      gazeLX: 0, gazeLY: 0, gazeRX: 0, gazeRY: 0,
-      blink: 0, mouth: 0
+      x:innerWidth/2, top:0, width:420, roll:0, scale:1,
+      gazeLX:0, gazeLY:0, gazeRX:0, gazeRY:0, blink:0, mouth:0
     };
     const target = { ...motion };
+
+    const clamp = (v,min,max) => Math.max(min,Math.min(max,v));
+    const mix = (a,b,t) => a+(b-a)*t;
+    const smoothing = (dt,speed) => 1-Math.exp(-dt*speed);
+    const getBlendshape = (categories,name) =>
+      categories?.find(item => item.categoryName===name)?.score ?? 0;
+
+    bgButtons.forEach(button => button.addEventListener("click", () => {
+      backgroundColor = button.dataset.bg;
+      bgButtons.forEach(item => item.setAttribute("aria-pressed", String(item===button)));
+    }));
 
     toggle.addEventListener("click", () => {
       filterOn = !filterOn;
@@ -107,242 +170,276 @@
       potato.style.opacity = filterOn && hasFace ? "1" : "0";
     });
 
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-    const mix = (a, b, amount) => a + (b - a) * amount;
-    // 프레임률이 달라도 움직임의 부드러움이 일정하도록 시간 기반 보간을 사용합니다.
-    const smoothing = (dt, speed) => 1 - Math.exp(-dt * speed);
-
-    function getBlendshape(categories, name) {
-      return categories?.find(item => item.categoryName === name)?.score ?? 0;
+    function resizeCanvases() {
+      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+      const w = Math.round(innerWidth*dpr), h = Math.round(innerHeight*dpr);
+      if (output.width!==w || output.height!==h) {
+        output.width=w; output.height=h;
+        personCanvas.width=w; personCanvas.height=h;
+      }
     }
 
-    // object-fit: cover로 잘린 영역과 좌우 반전을 모두 반영해 영상 좌표를 화면 좌표로 변환합니다.
+    function drawCover(ctx, source, mirror=false) {
+      const w=output.width, h=output.height;
+      const sw=source.videoWidth || source.width, sh=source.videoHeight || source.height;
+      const scale=Math.max(w/sw,h/sh), dw=sw*scale, dh=sh*scale;
+      const dx=(w-dw)/2, dy=(h-dh)/2;
+      ctx.save();
+      if (mirror) {
+        ctx.translate(w,0);
+        ctx.scale(-1,1);
+      }
+      ctx.drawImage(source,dx,dy,dw,dh);
+      ctx.restore();
+    }
+
+    function updateMask(mask) {
+      if (!mask) return;
+      const width=mask.width, height=mask.height;
+      const values=mask.getAsUint8Array();
+      if (maskCanvas.width!==width || maskCanvas.height!==height) {
+        maskCanvas.width=width; maskCanvas.height=height;
+      }
+      const pixels=maskCtx.createImageData(width,height);
+      for (let i=0;i<values.length;i++) {
+        const alpha=values[i] > 0 ? 255 : 0;
+        const p=i*4;
+        pixels.data[p]=255; pixels.data[p+1]=255; pixels.data[p+2]=255;
+        pixels.data[p+3]=alpha;
+      }
+      maskCtx.putImageData(pixels,0,0);
+      // 가장자리를 약간 부드럽게 만들어 인물 테두리의 계단 현상을 완화합니다.
+      personCtx.save();
+      personCtx.globalCompositeOperation="destination-in";
+      personCtx.filter="blur(2px)";
+      drawCover(personCtx,maskCanvas,true);
+      personCtx.restore();
+    }
+
+    function renderCamera() {
+      resizeCanvases();
+      const w=output.width,h=output.height;
+      out.clearRect(0,0,w,h);
+
+      if (!filterOn) {
+        drawCover(out,video,true);
+        return;
+      }
+
+      out.fillStyle=backgroundColor;
+      out.fillRect(0,0,w,h);
+      if (latestMask) {
+        personCtx.clearRect(0,0,w,h);
+        drawCover(personCtx,video,true);
+        personCtx.globalCompositeOperation="destination-in";
+        personCtx.save();
+        personCtx.filter="blur(1.5px)";
+        drawCover(personCtx,maskCanvas,true);
+        personCtx.restore();
+        personCtx.globalCompositeOperation="source-over";
+        out.drawImage(personCanvas,0,0);
+      }
+    }
+
     function videoPointToScreen(point) {
-      const vw = video.videoWidth || 1;
-      const vh = video.videoHeight || 1;
-      const scale = Math.max(innerWidth / vw, innerHeight / vh);
-      const renderedW = vw * scale;
-      const renderedH = vh * scale;
-      const cropX = (renderedW - innerWidth) / 2;
-      const cropY = (renderedH - innerHeight) / 2;
+      const vw=video.videoWidth||1, vh=video.videoHeight||1;
+      const scale=Math.max(innerWidth/vw,innerHeight/vh);
+      const renderedW=vw*scale, renderedH=vh*scale;
+      const cropX=(renderedW-innerWidth)/2, cropY=(renderedH-innerHeight)/2;
       return {
-        x: innerWidth - (point.x * renderedW - cropX),
-        y: point.y * renderedH - cropY
+        x:innerWidth-(point.x*renderedW-cropX),
+        y:point.y*renderedH-cropY
       };
     }
 
     function resetFaceTargets() {
-      target.blink = 0;
-      target.mouth = 0;
-      target.gazeLX = target.gazeLY = target.gazeRX = target.gazeRY = 0;
+      target.blink=0; target.mouth=0;
+      target.gazeLX=target.gazeLY=target.gazeRX=target.gazeRY=0;
     }
 
-    async function createTrackerWithFallback(Tracker, vision, options) {
-      try {
-        return await Tracker.createFromOptions(vision, options);
-      } catch (gpuError) {
-        // 일부 기기나 브라우저에서 GPU delegate를 지원하지 않으면 CPU로 자동 전환합니다.
-        console.warn("GPU delegate unavailable; retrying with CPU.", gpuError);
-        const cpuOptions = {
-          ...options,
-          baseOptions: { ...options.baseOptions, delegate: "CPU" }
-        };
-        return await Tracker.createFromOptions(vision, cpuOptions);
+    async function createTrackerWithFallback(Tracker,vision,options) {
+      try { return await Tracker.createFromOptions(vision,options); }
+      catch (error) {
+        console.warn("GPU 초기화 실패, CPU로 전환합니다.",error);
+        return await Tracker.createFromOptions(vision,{
+          ...options,baseOptions:{...options.baseOptions,delegate:"CPU"}
+        });
       }
     }
 
     async function start() {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("이 브라우저에서는 카메라 접근을 지원하지 않습니다. HTTPS 환경에서 열어 주세요.");
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 30, max: 30 }
-          }
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("카메라 권한을 사용할 수 없습니다.");
+        const stream=await navigator.mediaDevices.getUserMedia({
+          audio:false,
+          video:{facingMode:"user",width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30,max:30}}
         });
-        video.srcObject = stream;
-        await new Promise((resolve, reject) => {
-          video.addEventListener("loadeddata", resolve, { once: true });
-          video.addEventListener("error", reject, { once: true });
+        video.srcObject=stream;
+        await new Promise((resolve,reject)=>{
+          video.addEventListener("loadeddata",resolve,{once:true});
+          video.addEventListener("error",reject,{once:true});
         });
         await video.play();
 
-        const vision = await FilesetResolver.forVisionTasks(
+        const vision=await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
-        const modelBase = "https://storage.googleapis.com/mediapipe-models";
-        faceTracker = await createTrackerWithFallback(FaceLandmarker, vision, {
-          baseOptions: {
-            modelAssetPath: modelBase + "/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numFaces: 1,
-          minFaceDetectionConfidence: 0.55,
-          minFacePresenceConfidence: 0.55,
-          minTrackingConfidence: 0.55,
-          outputFaceBlendshapes: true
+        const modelBase="https://storage.googleapis.com/mediapipe-models";
+        faceTracker=await createTrackerWithFallback(FaceLandmarker,vision,{
+          baseOptions:{modelAssetPath:modelBase+"/face_landmarker/face_landmarker/float16/1/face_landmarker.task",delegate:"GPU"},
+          runningMode:"VIDEO",numFaces:1,minFaceDetectionConfidence:.55,
+          minFacePresenceConfidence:.55,minTrackingConfidence:.55,outputFaceBlendshapes:true
         });
-        poseTracker = await createTrackerWithFallback(PoseLandmarker, vision, {
-          baseOptions: {
-            modelAssetPath: modelBase + "/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
+        poseTracker=await createTrackerWithFallback(PoseLandmarker,vision,{
+          baseOptions:{modelAssetPath:modelBase+"/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:"GPU"},
+          runningMode:"VIDEO",numPoses:1,minPoseDetectionConfidence:.5,
+          minPosePresenceConfidence:.5,minTrackingConfidence:.5
         });
-        status.textContent = "얼굴과 움직임 인식 중";
+        segmenter=await createTrackerWithFallback(ImageSegmenter,vision,{
+          baseOptions:{
+            modelAssetPath:modelBase+"/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite",
+            delegate:"GPU"
+          },
+          runningMode:"VIDEO",outputCategoryMask:true,outputConfidenceMasks:false
+        });
+        status.textContent="얼굴과 배경 분리 인식 중";
         requestAnimationFrame(track);
-      } catch (error) {
+      } catch(error) {
         console.error(error);
-        status.textContent = error?.message?.includes("GPU")
-          ? "그래픽 가속 초기화 실패. 브라우저를 새로고침해 주세요."
-          : "카메라 또는 인식 모델을 불러오지 못했습니다.";
+        status.textContent="카메라 또는 인식 모델을 불러오지 못했습니다.";
       }
     }
 
-    function updateFace(faceResult, poseResult, now) {
-      const face = faceResult.faceLandmarks?.[0];
+    function updateFace(faceResult,poseResult,now) {
+      const face=faceResult.faceLandmarks?.[0];
       if (!face) {
-        if (now - lastFaceTime > 220) {
-          hasFace = false;
-          resetFaceTargets();
-          potato.style.opacity = "0";
+        if (now-lastFaceTime>260) {
+          hasFace=false; resetFaceTargets(); potato.style.opacity="0";
         }
         return;
       }
+      hasFace=true; lastFaceTime=now;
+      const noseScreen=videoPointToScreen(face[1]);
+      const leftScreen=videoPointToScreen(face[33]);
+      const rightScreen=videoPointToScreen(face[263]);
+      const eyeDistance=Math.hypot(rightScreen.x-leftScreen.x,rightScreen.y-leftScreen.y);
+      const pose=poseResult.poseLandmarks?.[0];
 
-      hasFace = true;
-      lastFaceTime = now;
-      const nose = face[1];
-      const leftOuter = face[33];
-      const rightOuter = face[263];
-      const leftScreen = videoPointToScreen(leftOuter);
-      const rightScreen = videoPointToScreen(rightOuter);
-      const noseScreen = videoPointToScreen(nose);
-      const eyeDistancePx = Math.hypot(rightScreen.x - leftScreen.x, rightScreen.y - leftScreen.y);
-
-      target.x = noseScreen.x;
-      target.y = noseScreen.y - eyeDistancePx * 0.42;
-
-      // 눈 사이 거리로 얼굴 크기를 추정해 카메라와의 거리에 맞춰 캐릭터 크기를 조절합니다.
-      const baseWidth = Math.min(310, Math.max(150, innerWidth * (innerWidth <= 600 ? 0.42 : 0.23)));
-      target.scale = clamp((eyeDistancePx * 2.25) / baseWidth, 0.68, 1.5);
-
-      // 눈 기울기는 좌우 반전된 화면 좌표에서 계산합니다.
-      target.roll = Math.atan2(rightScreen.y - leftScreen.y, rightScreen.x - leftScreen.x);
-
-      const blend = faceResult.faceBlendshapes?.[0]?.categories;
-      target.blink = clamp(Math.max(
-        getBlendshape(blend, "eyeBlinkLeft"),
-        getBlendshape(blend, "eyeBlinkRight")
-      ), 0, 1);
-      target.mouth = clamp(getBlendshape(blend, "jawOpen"), 0, 1);
-
-      // 홍채를 각 눈의 실제 경계 안에서 정규화해 시선 이동량을 구합니다.
-      if (face.length > 473) {
-        const eyeData = [
-          { iris: face[468], a: face[33], b: face[133], top: face[159], bottom: face[145] },
-          { iris: face[473], a: face[362], b: face[263], top: face[386], bottom: face[374] }
-        ];
-        const gaze = eyeData.map(({ iris, a, b, top, bottom }) => {
-          const centerX = (a.x + b.x) / 2;
-          const centerY = (top.y + bottom.y) / 2;
-          const halfW = Math.max(Math.abs(a.x - b.x) / 2, 0.002);
-          const halfH = Math.max(Math.abs(top.y - bottom.y) / 2, 0.002);
-          return {
-            x: clamp((iris.x - centerX) / halfW, -1, 1) * 7,
-            y: clamp((iris.y - centerY) / halfH, -1, 1) * 5
-          };
-        });
-        target.gazeLX = gaze[0].x;
-        target.gazeLY = gaze[0].y;
-        target.gazeRX = gaze[1].x;
-        target.gazeRY = gaze[1].y;
-      }
-
-      // 어깨 추적은 얼굴 추적을 보조하는 정도로만 반영해 캐릭터가 과하게 흔들리지 않게 합니다.
-      const pose = poseResult.poseLandmarks?.[0];
+      let centerX=noseScreen.x;
+      let shoulderY=noseScreen.y+eyeDistance*2.2;
+      let shoulderWidth=eyeDistance*4.8;
       if (pose?.[11] && pose?.[12]) {
-        const leftShoulder = pose[11];
-        const rightShoulder = pose[12];
-        const visible = Math.min(leftShoulder.visibility ?? 0, rightShoulder.visibility ?? 0);
-        if (visible > 0.45) {
-          const shoulders = videoPointToScreen({
-            x: (leftShoulder.x + rightShoulder.x) / 2,
-            y: (leftShoulder.y + rightShoulder.y) / 2
-          });
-          target.x = mix(target.x, shoulders.x, 0.10);
-          target.y = mix(target.y, shoulders.y - eyeDistancePx * 1.25, 0.10);
+        const l=pose[11],r=pose[12];
+        const visibility=Math.min(l.visibility??0,r.visibility??0);
+        if (visibility>.35) {
+          const ls=videoPointToScreen(l),rs=videoPointToScreen(r);
+          centerX=(ls.x+rs.x)/2;
+          shoulderY=(ls.y+rs.y)/2;
+          shoulderWidth=Math.hypot(rs.x-ls.x,rs.y-ls.y);
         }
       }
 
-      if (filterOn) potato.style.opacity = "1";
+      // 상체 너비를 기준으로 감자 몸통을 배치해 머리만 떠다니는 느낌을 줄입니다.
+      target.width=clamp(shoulderWidth*2.05,Math.min(300,innerWidth*.78),innerWidth*1.12);
+      const avatarHeight=target.width/0.72;
+      const headTop=noseScreen.y-eyeDistance*2.65;
+      target.x=centerX;
+      target.top=clamp(headTop, -avatarHeight*.04, innerHeight*.28);
+      target.roll=clamp(Math.atan2(rightScreen.y-leftScreen.y,rightScreen.x-leftScreen.x),-.22,.22);
+      target.scale=1;
+
+      const blend=faceResult.faceBlendshapes?.[0]?.categories;
+      target.blink=clamp(Math.max(getBlendshape(blend,"eyeBlinkLeft"),getBlendshape(blend,"eyeBlinkRight")),0,1);
+      target.mouth=clamp(getBlendshape(blend,"jawOpen"),0,1);
+
+      if (face.length>473) {
+        const eyes=[
+          {iris:face[468],a:face[33],b:face[133],top:face[159],bottom:face[145]},
+          {iris:face[473],a:face[362],b:face[263],top:face[386],bottom:face[374]}
+        ];
+        const gaze=eyes.map(({iris,a,b,top,bottom})=>{
+          const cx=(a.x+b.x)/2,cy=(top.y+bottom.y)/2;
+          const hw=Math.max(Math.abs(a.x-b.x)/2,.002);
+          const hh=Math.max(Math.abs(top.y-bottom.y)/2,.002);
+          return {x:clamp((iris.x-cx)/hw,-1,1)*8,y:clamp((iris.y-cy)/hh,-1,1)*6};
+        });
+        target.gazeLX=gaze[0].x; target.gazeLY=gaze[0].y;
+        target.gazeRX=gaze[1].x; target.gazeRY=gaze[1].y;
+      }
+      potato.style.opacity=filterOn?"1":"0";
     }
 
-    function render(now) {
-      const dt = Math.min((now - (lastFrameTime || now)) / 1000, 0.05);
-      lastFrameTime = now;
-      const positionAlpha = smoothing(dt, 13);
-      const detailAlpha = smoothing(dt, 20);
-      const scaleAlpha = smoothing(dt, 8);
+    function renderAvatar(now) {
+      const dt=Math.min((now-(lastFrameTime||now))/1000,.05);
+      lastFrameTime=now;
+      const p=smoothing(dt,11),d=smoothing(dt,19),sz=smoothing(dt,8);
+      motion.x=mix(motion.x,target.x,p);
+      motion.top=mix(motion.top,target.top,p);
+      motion.width=mix(motion.width,target.width,sz);
+      motion.roll=mix(motion.roll,target.roll,p);
+      motion.gazeLX=mix(motion.gazeLX,target.gazeLX,d);
+      motion.gazeLY=mix(motion.gazeLY,target.gazeLY,d);
+      motion.gazeRX=mix(motion.gazeRX,target.gazeRX,d);
+      motion.gazeRY=mix(motion.gazeRY,target.gazeRY,d);
+      motion.blink=mix(motion.blink,target.blink,d);
+      motion.mouth=mix(motion.mouth,target.mouth,d);
 
-      motion.x = mix(motion.x, target.x, positionAlpha);
-      motion.y = mix(motion.y, target.y, positionAlpha);
-      motion.roll = mix(motion.roll, target.roll, positionAlpha);
-      motion.scale = mix(motion.scale, target.scale, scaleAlpha);
-      motion.gazeLX = mix(motion.gazeLX, target.gazeLX, detailAlpha);
-      motion.gazeLY = mix(motion.gazeLY, target.gazeLY, detailAlpha);
-      motion.gazeRX = mix(motion.gazeRX, target.gazeRX, detailAlpha);
-      motion.gazeRY = mix(motion.gazeRY, target.gazeRY, detailAlpha);
-      motion.blink = mix(motion.blink, target.blink, detailAlpha);
-      motion.mouth = mix(motion.mouth, target.mouth, detailAlpha);
+      potato.style.left=motion.x+"px";
+      potato.style.top=motion.top+"px";
+      potato.style.width=motion.width+"px";
+      potato.style.transform=`translate(-50%,0) rotate(${motion.roll*180/Math.PI}deg)`;
 
-      potato.style.left = motion.x + "px";
-      potato.style.top = motion.y + "px";
-      potato.style.transform =
-        `translate(-50%, -50%) rotate(${motion.roll * 180 / Math.PI}deg) scale(${motion.scale})`;
+      const eyeY=Math.max(.08,1-motion.blink*.92);
+      eyeLeft.setAttribute("transform",`translate(${motion.gazeLX} ${motion.gazeLY}) scale(1 ${eyeY})`);
+      eyeRight.setAttribute("transform",`translate(${motion.gazeRX} ${motion.gazeRY}) scale(1 ${eyeY})`);
 
-      const eyeY = Math.max(0.08, 1 - motion.blink * 0.92);
-      eyeLeft.setAttribute("transform", `translate(${motion.gazeLX} ${motion.gazeLY}) scale(1 ${eyeY})`);
-      eyeRight.setAttribute("transform", `translate(${motion.gazeRX} ${motion.gazeRY}) scale(1 ${eyeY})`);
-
-      const mouthHeight = 3 + motion.mouth * 34;
-      mouth.setAttribute("d", `M137 218 Q150 ${218 + mouthHeight} 163 218`);
-      mouth.setAttribute("stroke-width", String(6 + motion.mouth * 2));
+      // 닫힌 입은 아래로 볼록한 미소, 입을 벌리면 별도의 타원형 입으로 전환합니다.
+      if (motion.mouth<.16) {
+        mouth.style.opacity="1"; mouthOpen.style.opacity="0";
+        mouth.setAttribute("d","M215 350 Q250 384 285 350");
+      } else {
+        mouth.style.opacity="0";
+        mouthOpen.style.opacity=String(clamp(motion.mouth*1.15,0,1));
+        mouthOpen.setAttribute("ry",String(4+motion.mouth*25));
+      }
     }
 
     function track(now) {
-      // 화면 렌더링은 매 프레임, 무거운 AI 추론은 초당 최대 약 30회만 실행합니다.
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && now - lastInferenceTime >= 30) {
-        lastVideoTime = video.currentTime;
-        lastInferenceTime = now;
+      if (video.readyState>=2 && video.currentTime!==lastVideoTime && now-lastInferenceTime>=45) {
+        lastVideoTime=video.currentTime; lastInferenceTime=now;
         try {
-          const faceResult = faceTracker.detectForVideo(video, now);
-          const poseResult = poseTracker.detectForVideo(video, now);
-          updateFace(faceResult, poseResult, now);
-        } catch (error) {
-          console.warn("Tracking frame skipped:", error);
-        }
+          const faceResult=faceTracker.detectForVideo(video,now);
+          const poseResult=poseTracker.detectForVideo(video,now);
+          updateFace(faceResult,poseResult,now);
+          const segmentation=segmenter.segmentForVideo(video,now);
+          const categoryMask=segmentation.categoryMask;
+          if (categoryMask) {
+            const width=categoryMask.width,height=categoryMask.height;
+            if (maskCanvas.width!==width || maskCanvas.height!==height) {
+              maskCanvas.width=width; maskCanvas.height=height;
+            }
+            const values=categoryMask.getAsUint8Array();
+            const pixels=maskCtx.createImageData(width,height);
+            for (let i=0;i<values.length;i++) {
+              const p=i*4;
+              pixels.data[p]=255; pixels.data[p+1]=255; pixels.data[p+2]=255;
+              pixels.data[p+3]=values[i]===0?0:255;
+            }
+            maskCtx.putImageData(pixels,0,0);
+            latestMask=maskCanvas;
+            categoryMask.close?.();
+          }
+        } catch(error) { console.warn("인식 프레임을 건너뜁니다.",error); }
       }
-      render(now);
+      renderCamera();
+      renderAvatar(now);
       requestAnimationFrame(track);
     }
 
-    window.addEventListener("resize", () => {
-      target.x = innerWidth / 2;
-      target.y = innerHeight / 2;
+    window.addEventListener("resize",()=>{
+      target.x=innerWidth/2;
+      resizeCanvases();
     });
-
     start();
   </script>
 </body>
