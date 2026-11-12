@@ -181,6 +181,24 @@
           eyeLeft.setAttribute("transform", `translate(0 0) scale(1 ${Math.max(0.08, 1 - blink * 0.92)})`);
           eyeRight.setAttribute("transform", `translate(0 0) scale(1 ${Math.max(0.08, 1 - blink * 0.92)})`);
 
+          // 홍채 위치를 이용해 감자 눈동자도 시선 방향을 따라 움직입니다.
+          if (face[468] && face[473]) {
+            const leftEyeCenterX = (face[33].x + face[133].x) / 2;
+            const leftEyeCenterY = (face[33].y + face[133].y) / 2;
+            const rightEyeCenterX = (face[362].x + face[263].x) / 2;
+            const rightEyeCenterY = (face[362].y + face[263].y) / 2;
+            const leftEyeWidth = Math.abs(face[33].x - face[133].x) / 2;
+            const rightEyeWidth = Math.abs(face[362].x - face[263].x) / 2;
+            const gazeLeftX = clamp((face[468].x - leftEyeCenterX) / Math.max(leftEyeWidth, 0.001), -1, 1) * 7;
+            const gazeLeftY = clamp((face[468].y - leftEyeCenterY) / 0.025, -1, 1) * 5;
+            const gazeRightX = clamp((face[473].x - rightEyeCenterX) / Math.max(rightEyeWidth, 0.001), -1, 1) * 7;
+            const gazeRightY = clamp((face[473].y - rightEyeCenterY) / 0.025, -1, 1) * 5;
+            eyeLeft.setAttribute("cx", String(105 + gazeLeftX));
+            eyeLeft.setAttribute("cy", String(164 + gazeLeftY));
+            eyeRight.setAttribute("cx", String(195 + gazeRightX));
+            eyeRight.setAttribute("cy", String(164 + gazeRightY));
+          }
+
           const mouthHeight = 3 + mouthOpen * 34;
           mouth.setAttribute("d", `M137 218 Q150 ${218 + mouthHeight} 163 218`);
           mouth.setAttribute("stroke-width", String(6 + mouthOpen * 2));
